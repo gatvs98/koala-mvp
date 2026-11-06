@@ -125,8 +125,11 @@
     <div class="strip" id="strip"></div>
     <div class="row" style="margin-top:14px">
       <span><button id="clear">Clear</button> <button id="mixBtn">🎚 Mix</button></span>
-      <span><select id="loops" aria-label="Loops to export"><option value="1">1 loop</option><option value="2" selected>2 loops</option><option value="4">4 loops</option><option value="8">8 loops</option></select>
-      <button id="export">⬇ Export WAV</button></span>
+    </div>
+    <div class="ctl" style="margin-top:10px">
+      <select id="loops" aria-label="Loops to export"><option value="1">1 loop</option><option value="2" selected>2 loops</option><option value="4">4 loops</option><option value="8">8 loops</option></select>
+      <button id="export">⬇ Download WAV</button>
+      <button id="share">↗ Share</button>
     </div>
   </section>
 </main>
@@ -384,7 +387,7 @@ function encodeWav(buf) {
   for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, d[i])) * 0x7fff, true);
   return new Blob([v], { type: 'audio/wav' });
 }
-async function exportWav() {
+async function exportWav(mode) {
   if (!pattern.some((r, i) => pads[i].buffer && r.some(Boolean))) return toast('Add some steps to the beat first');
   const loops = +$('#loops').value, stepDur = 60 / bpm / 4, tail = 1.5;
   const off = new OfflineAudioContext(1, Math.ceil((loops * STEPS * stepDur + tail) * SR), SR);
@@ -397,13 +400,15 @@ async function exportWav() {
   toast('Rendering…');
   const blob = encodeWav(await off.startRendering()), name = `pocket-pads-${bpm}bpm.wav`;
   const file = new File([blob], name, { type: 'audio/wav' });
-  if (navigator.canShare?.({ files: [file] })) {
+  if (mode === 'share' && navigator.canShare?.({ files: [file] })) {
     try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; }
   }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast('Saved ' + name);
 }
-$('#export').onclick = () => { ctx.resume(); exportWav(); };
+$('#export').onclick = () => { ctx.resume(); exportWav('download'); };
+$('#share').onclick = () => { ctx.resume(); exportWav('share'); };
+if (!navigator.canShare) $('#share').style.display = 'none';
 
 /* ---------- recording ---------- */
 let recorder = null;

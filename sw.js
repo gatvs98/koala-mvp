@@ -1,5 +1,5 @@
 // Offline cache. Bump VERSION whenever you change any cached file.
-const VERSION = 'pp-v7';
+const VERSION = 'pp-v8';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
