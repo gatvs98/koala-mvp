@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#121212">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Pocket Pads</title>
+<style>
+  :root{--bg:#121212;--panel:#1c1c1f;--line:#2e2e33;--text:#f2f2f2;--dim:#8d8d96;--rec:#ff3b4e;--accent:#ffd23f}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overscroll-behavior:none}
+  body{display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);max-width:640px;margin:0 auto}
+  button{font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;touch-action:manipulation}
+  button:active{filter:brightness(1.4)}
+  header{display:flex;gap:6px;padding:10px 12px 6px}
+  .tab{flex:1;text-align:center;font-weight:600}
+  .tab.on{background:var(--text);color:#000;border-color:var(--text)}
+  main{flex:1;min-height:0;overflow:auto;padding:6px 12px}
+  section{display:none}section.on{display:block}
+  .hint{color:var(--dim);font-size:13px;margin:10px 2px}
+
+  /* pads */
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .pad{aspect-ratio:1;border-radius:16px;background:hsl(var(--h) 70% 45%);display:flex;align-items:flex-end;padding:8px;font-size:12px;font-weight:700;color:#fff;touch-action:none;position:relative;transition:transform .05s,filter .1s}
+  .pad.empty{background:transparent;border:2px dashed var(--line);color:var(--dim)}
+  .pad.sel{outline:3px solid #fff;outline-offset:2px}
+  .pad.hit{transform:scale(.94);filter:brightness(1.6)}
+  .pad b{position:absolute;top:6px;left:9px;opacity:.55;font-size:11px}
+
+  /* keys */
+  .keys{position:relative;display:flex;height:min(52vh,340px);margin-top:8px;touch-action:none}
+  .wk{flex:1;background:#f4f4f4;border:1px solid #888;border-radius:0 0 8px 8px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;color:#666;font-size:10px;touch-action:none}
+  .wk.on{background:hsl(var(--h) 80% 65%)}
+  .bk{position:absolute;top:0;height:60%;background:#111;border-radius:0 0 6px 6px;z-index:2;touch-action:none;border:1px solid #000}
+  .bk.on{background:hsl(var(--h) 70% 40%)}
+  .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
+
+  /* beat */
+  .tempo{display:flex;align-items:center;gap:10px;margin:6px 0 12px}
+  .tempo input{flex:1;accent-color:var(--accent)}
+  #play{min-width:84px;font-weight:700}
+  #play.on{background:var(--accent);color:#000;border-color:var(--accent)}
+  .seq{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+  .lab{width:58px;height:34px;padding:0 6px;font-size:11px;font-weight:700;border-radius:8px;background:hsl(var(--h) 70% 45%);border:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cells{flex:1;display:grid;grid-template-columns:repeat(16,1fr);gap:2px}
+  .cell{height:34px;background:var(--panel);border-radius:4px;border:0;padding:0;touch-action:manipulation}
+  .cell.b{background:#26262b}
+  .cell.on{background:hsl(var(--h) 80% 55%)}
+  .cell.now{box-shadow:inset 0 0 0 2px #fff}
+
+  /* footer record bar */
+  footer{display:flex;gap:8px;align-items:center;padding:10px 12px 12px;border-top:1px solid var(--line)}
+  #rec{flex:1;font-weight:700;background:var(--rec);border-color:var(--rec);color:#fff;padding:14px}
+  #rec.on{animation:pulse 1s infinite}
+  @keyframes pulse{50%{filter:brightness(1.5)}}
+  #who{font-size:12px;color:var(--dim);min-width:84px;text-align:center}
+  #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:10px 14px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9}
+  #toast.on{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <button class="tab on" data-t="pads">Pads</button>
+  <button class="tab" data-t="keys">Keys</button>
+  <button class="tab" data-t="beat">Beat</button>
+</header>
+
+<main>
+  <section id="pads" class="on">
+    <div class="grid" id="padGrid"></div>
+    <p class="hint"><b>1.</b> Tap a pad to pick it &nbsp;<b>2.</b> Hit <b>● Record</b>, make a sound, hit <b>Stop</b> &nbsp;<b>3.</b> Play it on <b>Keys</b> or drop it into the <b>Beat</b>.</p>
+  </section>
+
+  <section id="keys">
+    <div class="row">
+      <span class="hint" id="keysHint"></span>
+      <span><button id="octDn">Oct −</button> <button id="octUp">Oct +</button></span>
+    </div>
+    <div class="keys" id="keyboard"></div>
+    <p class="hint">Your selected pad's sound, pitched across the keys. Pick another sound on the Pads tab.</p>
+  </section>
+
+  <section id="beat">
+    <div class="tempo">
+      <button id="play">▶ Play</button>
+      <span id="bpmLbl" style="width:62px">100 BPM</span>
+      <input type="range" id="bpm" min="60" max="180" value="100">
+    </div>
+    <div id="seq"></div>
+    <div class="row" style="margin-top:10px"><button id="clear">Clear beat</button><span class="hint">Every pad with a sound gets a row.</span></div>
+  </section>
+</main>
+
+<footer>
+  <button id="rec">● Record</button>
+  <div id="who"></div>
+  <button id="erase">Erase</button>
+</footer>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const STEPS = 16, NPADS = 16, MAX_REC = 10;
+const hue = i => (i * 23 + 350) % 360;
+
+/* ---------- audio core ---------- */
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+const master = ctx.createGain(); master.gain.value = 0.9;
+const comp = ctx.createDynamicsCompressor(); master.connect(comp); comp.connect(ctx.destination);
+const SR = ctx.sampleRate;
+
+function make(sec, fn) {
+  const b = ctx.createBuffer(1, Math.floor(sec * SR), SR), d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = fn(i / SR, i);
+  return b;
+}
+const noise = () => Math.random() * 2 - 1;
+function sweep(f0, f1, k) { let ph = 0; return t => (ph += 2 * Math.PI * (f1 + (f0 - f1) * Math.exp(-t * k)) / SR, Math.sin(ph)); }
+function drums() {
+  const kick = sweep(160, 45, 30), tom = sweep(220, 110, 14);
+  let prevH = 0, prevO = 0;
+  return [
+    ['Kick',  make(.5,  t => kick(t) * Math.exp(-t * 7) * .95)],
+    ['Snare', make(.25, t => (noise() * .6 + Math.sin(2 * Math.PI * 185 * t) * .5) * Math.exp(-t * 20))],
+    ['Hat',   make(.08, t => { const n = noise(), h = n - prevH; prevH = n; return h * .5 * Math.exp(-t * 60); })],
+    ['Open',  make(.4,  t => { const n = noise(), h = n - prevO; prevO = n; return h * .4 * Math.exp(-t * 10); })],
+    ['Clap',  make(.3,  t => noise() * .7 * Math.exp(-t * 22) * (t < .03 && (t % .01) > .006 ? .3 : 1))],
+    ['Tom',   make(.45, t => tom(t) * Math.exp(-t * 8) * .9)],
+    ['Rim',   make(.08, t => (Math.sin(2 * Math.PI * 820 * t) * .6 + noise() * .3) * Math.exp(-t * 70))],
+    ['Bell',  make(.35, t => ((Math.sin(2 * Math.PI * 540 * t) > 0 ? 1 : -1) + (Math.sin(2 * Math.PI * 800 * t) > 0 ? 1 : -1)) * .25 * Math.exp(-t * 11))],
+  ];
+}
+
+const pads = Array.from({ length: NPADS }, () => ({ name: '', buffer: null }));
+drums().forEach(([n, b], i) => { pads[i].name = n; pads[i].buffer = b; });
+let sel = 0;
+
+function play(i, { rate = 1, when = 0, gain = 1 } = {}) {
+  const p = pads[i]; if (!p.buffer) return null;
+  const src = ctx.createBufferSource(), g = ctx.createGain();
+  src.buffer = p.buffer; src.playbackRate.value = rate; g.gain.value = gain;
+  src.connect(g); g.connect(master); src.start(when || 0);
+  return { src, g };
+}
+
+/* ---------- persistence (recordings -> IndexedDB, pattern/bpm -> localStorage) ---------- */
+const dbp = new Promise(res => {
+  try {
+    const r = indexedDB.open('pocketpads', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('s');
+    r.onsuccess = () => res(r.result); r.onerror = () => res(null);
+  } catch { res(null); }
+});
+async function idb(mode, fn) {
+  const db = await dbp; if (!db) return;
+  return new Promise(res => { const t = db.transaction('s', mode), r = fn(t.objectStore('s')); t.oncomplete = () => res(r && r.result); t.onerror = () => res(); });
+}
+let pattern = Array.from({ length: NPADS }, () => Array(STEPS).fill(0));
+[[0, 8, 10], [4, 12]].forEach((on, r) => on.forEach(s => pattern[r][s] = 1));
+for (let s = 0; s < STEPS; s += 2) pattern[2][s] = 1;
+let bpm = 100;
+function saveState() { try { localStorage.setItem('pp', JSON.stringify({ bpm, pattern })); } catch {} }
+try { const s = JSON.parse(localStorage.getItem('pp') || 'null'); if (s) { bpm = s.bpm; pattern = s.pattern; } } catch {}
+
+/* ---------- toast ---------- */
+let tt; function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('on'), 2200); }
+
+/* ---------- pads ---------- */
+function flash(el) { el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 90); }
+function renderPads() {
+  const g = $('#padGrid'); g.innerHTML = '';
+  pads.forEach((p, i) => {
+    const el = document.createElement('div');
+    el.className = 'pad' + (p.buffer ? '' : ' empty') + (i === sel ? ' sel' : '');
+    el.style.setProperty('--h', hue(i));
+    el.innerHTML = `<b>${i + 1}</b>${p.buffer ? p.name : 'empty'}`;
+    el.addEventListener('pointerdown', e => {
+      e.preventDefault(); ctx.resume();
+      const changed = sel !== i; sel = i;
+      if (changed) { g.querySelector('.sel')?.classList.remove('sel'); el.classList.add('sel'); updateWho(); }
+      if (p.buffer) { play(i); flash(el); }
+    });
+    g.appendChild(el);
+  });
+  updateWho();
+}
+function updateWho() {
+  const p = pads[sel];
+  $('#who').textContent = `Pad ${sel + 1}${p.buffer ? ' · ' + p.name : ' · empty'}`;
+  $('#keysHint').textContent = p.buffer ? `Playing: ${p.name}` : 'Pad is empty — record something!';
+}
+
+/* ---------- keys ---------- */
+const WHITE = [0, 2, 4, 5, 7, 9, 11], BLACK_AFTER = { 0: 1, 1: 3, 3: 6, 4: 8, 5: 10 };
+const NOCT = 2, NW = 7 * NOCT; let oct = 0;
+const NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const heldKeys = new Map();
+function keyDown(el, n) {
+  ctx.resume();
+  const midi = 48 + 12 * oct + n, h = play(sel, { rate: Math.pow(2, (midi - 60) / 12) });
+  el.classList.add('on'); el.style.setProperty('--h', hue(sel));
+  if (h) heldKeys.set(el, h);
+}
+function keyUp(el) {
+  el.classList.remove('on');
+  const h = heldKeys.get(el); if (!h) return; heldKeys.delete(el);
+  const t = ctx.currentTime; h.g.gain.setTargetAtTime(0, t, 0.04); h.src.stop(t + 0.3);
+}
+function renderKeys() {
+  const kb = $('#keyboard'); kb.innerHTML = '';
+  const bind = (el, n) => {
+    el.addEventListener('pointerdown', e => { e.preventDefault(); keyDown(el, n); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => el.addEventListener(ev, () => keyUp(el)));
+  };
+  for (let w = 0; w < NW; w++) {
+    const o = Math.floor(w / 7), k = w % 7, n = o * 12 + WHITE[k];
+    const el = document.createElement('div'); el.className = 'wk';
+    if (k === 0) el.textContent = 'C' + (3 + oct + o);
+    bind(el, n); kb.appendChild(el);
+    if (BLACK_AFTER[k] !== undefined) {
+      const b = document.createElement('div'); b.className = 'bk';
+      b.style.width = (100 / NW * 0.6) + '%'; b.style.left = ((w + 1) / NW * 100 - 100 / NW * 0.3) + '%';
+      bind(b, o * 12 + BLACK_AFTER[k]); kb.appendChild(b);
+    }
+  }
+}
+$('#octUp').onclick = () => { oct = Math.min(2, oct + 1); renderKeys(); };
+$('#octDn').onclick = () => { oct = Math.max(-2, oct - 1); renderKeys(); };
+
+/* ---------- beat / drum machine ---------- */
+let playing = false, step = 0, nextTime = 0, timer = null, lastShown = -1;
+const queue = [];
+function renderBeat() {
+  const root = $('#seq'); root.innerHTML = '';
+  pads.forEach((p, i) => {
+    if (!p.buffer) return;
+    const row = document.createElement('div'); row.className = 'seq'; row.style.setProperty('--h', hue(i));
+    const lab = document.createElement('button'); lab.className = 'lab'; lab.textContent = p.name;
+    lab.onpointerdown = e => { e.preventDefault(); ctx.resume(); play(i); };
+    const cells = document.createElement('div'); cells.className = 'cells';
+    for (let s = 0; s < STEPS; s++) {
+      const c = document.createElement('button');
+      c.className = 'cell' + (s % 8 < 4 ? ' b' : '') + (pattern[i][s] ? ' on' : ''); c.dataset.s = s;
+      c.onclick = () => { pattern[i][s] ^= 1; c.classList.toggle('on'); saveState(); };
+      cells.appendChild(c);
+    }
+    row.append(lab, cells); root.appendChild(row);
+  });
+}
+function tick() {
+  while (nextTime < ctx.currentTime + 0.12) {
+    for (let i = 0; i < NPADS; i++) if (pattern[i][step] && pads[i].buffer) play(i, { when: nextTime });
+    queue.push({ s: step, t: nextTime });
+    nextTime += 60 / bpm / 4; step = (step + 1) % STEPS;
+  }
+}
+function showHead() {
+  if (!playing) return;
+  while (queue.length && queue[0].t <= ctx.currentTime) {
+    const { s } = queue.shift();
+    if (s !== lastShown) { setHead(s); lastShown = s; }
+  }
+  requestAnimationFrame(showHead);
+}
+function setHead(s) {
+  document.querySelectorAll('.cell.now').forEach(c => c.classList.remove('now'));
+  if (s >= 0) document.querySelectorAll(`.cell[data-s="${s}"]`).forEach(c => c.classList.add('now'));
+}
+function togglePlay() {
+  ctx.resume();
+  playing = !playing;
+  $('#play').classList.toggle('on', playing); $('#play').textContent = playing ? '■ Stop' : '▶ Play';
+  if (playing) { step = 0; nextTime = ctx.currentTime + 0.05; queue.length = 0; tick(); timer = setInterval(tick, 25); requestAnimationFrame(showHead); }
+  else { clearInterval(timer); setHead(-1); lastShown = -1; }
+}
+$('#play').onclick = togglePlay;
+$('#bpm').value = bpm; $('#bpmLbl').textContent = bpm + ' BPM';
+$('#bpm').oninput = e => { bpm = +e.target.value; $('#bpmLbl').textContent = bpm + ' BPM'; saveState(); };
+$('#clear').onclick = () => { pattern.forEach(r => r.fill(0)); saveState(); renderBeat(); };
+
+/* ---------- recording ---------- */
+let recorder = null;
+function process(buf) {  // mono mix, trim silence, normalise
+  const n = buf.length, d = new Float32Array(n);
+  for (let c = 0; c < buf.numberOfChannels; c++) { const x = buf.getChannelData(c); for (let i = 0; i < n; i++) d[i] += x[i] / buf.numberOfChannels; }
+  let peak = 0; for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(d[i]));
+  if (peak < 0.005) return null;
+  const thr = peak * 0.08; let a = 0, z = n - 1;
+  while (a < n && Math.abs(d[a]) < thr) a++;
+  while (z > a && Math.abs(d[z]) < thr) z--;
+  a = Math.max(0, a - Math.floor(buf.sampleRate * .01)); z = Math.min(n - 1, z + Math.floor(buf.sampleRate * .05));
+  const out = ctx.createBuffer(1, z - a + 1, buf.sampleRate), o = out.getChannelData(0), k = .9 / peak;
+  for (let i = a; i <= z; i++) o[i - a] = d[i] * k;
+  const f = Math.min(o.length, 200); for (let i = 0; i < f; i++) o[o.length - 1 - i] *= i / f;  // tiny fade-out, avoids clicks
+  return out;
+}
+function setSample(i, buffer, name, save = true) {
+  pads[i].buffer = buffer; pads[i].name = name;
+  if (save) idb('readwrite', s => buffer ? s.put({ i, name, rate: buffer.sampleRate, data: buffer.getChannelData(0) }, i) : s.delete(i));
+  renderPads(); renderBeat(); renderKeys();
+}
+async function toggleRec() {
+  await ctx.resume();
+  if (recorder) { recorder.stop(); return; }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') return toast('Recording needs https (or localhost)');
+  if (playing) togglePlay();
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
+  catch { return toast('Microphone permission was blocked'); }
+  const target = sel, chunks = [], mr = new MediaRecorder(stream), t0 = performance.now(), btn = $('#rec');
+  mr.ondataavailable = e => e.data.size && chunks.push(e.data);
+  const iv = setInterval(() => { const s = (performance.now() - t0) / 1000; btn.textContent = `■ Stop  ${s.toFixed(1)}s`; if (s >= MAX_REC) mr.stop(); }, 100);
+  mr.onstop = async () => {
+    clearInterval(iv); stream.getTracks().forEach(t => t.stop()); recorder = null;
+    btn.classList.remove('on'); btn.textContent = '● Record';
+    try {
+      const buf = process(await ctx.decodeAudioData(await new Blob(chunks, { type: mr.mimeType }).arrayBuffer()));
+      if (!buf) return toast('Heard nothing — try again, closer to the mic');
+      setSample(target, buf, `Rec ${target + 1}`); play(target); toast(`Saved to pad ${target + 1}`);
+    } catch { toast('Could not read that recording'); }
+  };
+  recorder = mr; mr.start(); btn.classList.add('on'); btn.textContent = '■ Stop  0.0s';
+}
+$('#rec').onclick = toggleRec;
+$('#erase').onclick = () => { if (pads[sel].buffer) { pattern[sel].fill(0); saveState(); setSample(sel, null, ''); } };
+
+/* ---------- tabs & boot ---------- */
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('main section').forEach(s => s.classList.toggle('on', s.id === b.dataset.t));
+  if (playing && b.dataset.t !== 'beat') { /* keep the beat running while you play keys */ }
+});
+document.addEventListener('contextmenu', e => e.preventDefault());
+renderPads(); renderKeys(); renderBeat();
+idb('readonly', s => s.getAll()).then(rows => {
+  (rows || []).forEach(r => {
+    const b = ctx.createBuffer(1, r.data.length, r.rate); b.copyToChannel(r.data, 0);
+    pads[r.i].buffer = b; pads[r.i].name = r.name;
+  });
+  if (rows && rows.length) { renderPads(); renderBeat(); }
+});
+window.__pp = { pads, pattern: () => pattern };
+</script>
+</body>
+</html>
