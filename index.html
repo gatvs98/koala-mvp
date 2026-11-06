@@ -83,6 +83,11 @@
   #wave{width:100%;height:170px;display:block;background:var(--panel);border-radius:12px;touch-action:none}
   .tbtns{display:flex;gap:8px;margin-top:12px}.tbtns button{flex:1;font-weight:700}
   #trSave{background:var(--accent);border-color:var(--accent);color:#000}
+  #chWave{width:100%;height:150px;display:block;background:var(--panel);border-radius:12px;touch-action:none}
+  #chop .ctl{margin-top:10px}
+  #chop .strip .pad{height:54px;align-items:center;justify-content:center;font-size:15px}
+  #chApply{width:100%;font-weight:700;background:var(--accent);border-color:var(--accent);color:#000;padding:14px;margin-bottom:8px}
+  #chRemove:disabled{opacity:.4}
   #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:10px 14px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9}
   #toast.on{opacity:1}
 </style>
@@ -92,6 +97,7 @@
   <button class="tab on" data-t="pads">Pads</button>
   <button class="tab" data-t="keys">Keys</button>
   <button class="tab" data-t="beat">Beat</button>
+  <button class="tab" data-t="chop">Chop</button>
 </header>
 
 <main>
@@ -130,6 +136,24 @@
       <select id="loops" aria-label="Loops to export"><option value="1">1 loop</option><option value="2" selected>2 loops</option><option value="4">4 loops</option><option value="8">8 loops</option></select>
       <button id="export">⬇ Download WAV</button>
       <button id="share">↗ Share</button>
+    </div>
+  </section>
+  <section id="chop">
+    <div class="ctl">
+      <button id="chRec">● Record</button>
+      <button id="chImport">📁 Import</button>
+      <button id="chUse">Use pad sound</button>
+    </div>
+    <input type="file" id="chFile" accept="audio/*" hidden>
+    <p class="hint" id="chHint">Load a long sound (record it, import a file, or use the selected pad's sound), cut it into slices, then put the slices on your pads.</p>
+    <div id="chBody" style="display:none">
+      <canvas id="chWave"></canvas>
+      <p class="hint" style="margin:6px 2px">Tap the waveform to add a cut. Drag a cut to move it. Tap a cut to select it, then remove it.</p>
+      <div class="ctl"><button class="chN" data-n="4">4 equal</button><button class="chN" data-n="8">8 equal</button><button class="chN" data-n="16">16 equal</button></div>
+      <div class="ctl"><button id="chAuto">✨ Auto-detect hits</button><button id="chRemove">✕ Remove cut</button></div>
+      <div class="strip" id="chSlices"></div>
+      <div class="row" style="margin:12px 0 8px"><label>Fill pads from <select id="chStart"></select></label><span class="hint" id="chInfo" style="margin:0"></span></div>
+      <button id="chApply">Put slices on pads</button>
     </div>
   </section>
 </main>
@@ -434,7 +458,7 @@ function setSample(i, buffer, name, save = true) {
   if (save) idb('readwrite', s => buffer ? s.put({ i, name, rate: buffer.sampleRate, data: buffer.getChannelData(0) }, i) : s.delete(i));
   renderPads(); renderBeat(); renderKeys();
 }
-async function toggleRec() {
+async function toggleRec(o = {}) {
   await ctx.resume();
   if (recorder) { recorder.stop(); return; }
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') return toast('Recording needs https (or localhost)');
@@ -442,21 +466,22 @@ async function toggleRec() {
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
   catch { return toast('Microphone permission was blocked'); }
-  const target = sel, chunks = [], mr = new MediaRecorder(stream), t0 = performance.now(), btn = $('#rec');
+  const target = sel, chunks = [], mr = new MediaRecorder(stream), t0 = performance.now(), btn = o.btn || $('#rec'), max = o.max || MAX_REC, idle = o.idle || '● Record';
   mr.ondataavailable = e => e.data.size && chunks.push(e.data);
-  const iv = setInterval(() => { const s = (performance.now() - t0) / 1000; btn.textContent = `■ Stop  ${s.toFixed(1)}s`; if (s >= MAX_REC) mr.stop(); }, 100);
+  const iv = setInterval(() => { const s = (performance.now() - t0) / 1000; btn.textContent = `■ Stop  ${s.toFixed(1)}s`; if (s >= max) mr.stop(); }, 100);
   mr.onstop = async () => {
     clearInterval(iv); stream.getTracks().forEach(t => t.stop()); recorder = null;
-    btn.classList.remove('on'); btn.textContent = '● Record';
+    btn.classList.remove('on'); btn.textContent = idle;
     try {
       const buf = process(await ctx.decodeAudioData(await new Blob(chunks, { type: mr.mimeType }).arrayBuffer()));
       if (!buf) return toast('Heard nothing — try again, closer to the mic');
+      if (o.onBuf) return o.onBuf(buf);
       setSample(target, buf, `Rec ${target + 1}`); play(target); toast(`Saved to pad ${target + 1}`);
     } catch { toast('Could not read that recording'); }
   };
   recorder = mr; mr.start(); btn.classList.add('on'); btn.textContent = '■ Stop  0.0s';
 }
-$('#rec').onclick = toggleRec;
+$('#rec').onclick = () => toggleRec();
 $('#who').onclick = () => {
   const p = pads[sel]; if (!p.buffer) return toast('Record something first');
   const n = (prompt('Name this sound', p.name) || '').trim().slice(0, 12);
@@ -522,11 +547,133 @@ $('#trSave').onclick = () => {
 };
 $('#trimBtn').onclick = openTrim;
 
+/* ---------- chop: cut one long sound into slices and spread them over the pads ---------- */
+let ch = null;   // {buf, marks:[fractions, sorted], selM:-1, mins, maxs}
+const $cw = $('#chWave'), cwc = $cw.getContext('2d'), MAXCUTS = NPADS - 1;
+const chBounds = () => [0, ...ch.marks, 1];
+const chStart = () => +$('#chStart').value;
+function sliceBuf(buf, a, b) {
+  const d = buf.getChannelData(0), s0 = Math.floor(a * d.length), s1 = Math.max(s0 + 1, Math.floor(b * d.length));
+  const out = ctx.createBuffer(1, s1 - s0, buf.sampleRate), o = out.getChannelData(0); o.set(d.subarray(s0, s1));
+  const fi = Math.min(o.length >> 1, Math.floor(buf.sampleRate * .002)), fo = Math.min(o.length >> 1, Math.floor(buf.sampleRate * .005));
+  for (let k = 0; k < fi; k++) o[k] *= k / fi;
+  for (let k = 0; k < fo; k++) o[o.length - 1 - k] *= k / fo;
+  return out;
+}
+function loadChop(buf) {
+  if (!buf) return;
+  ch = { buf, marks: [], selM: -1 };
+  const first = pads.findIndex(p => !p.buffer); $('#chStart').value = (first < 0 ? 0 : first) + 1;
+  $('#chBody').style.display = 'block'; $('#chHint').textContent = `${buf.duration.toFixed(1)}s loaded. Pick a slicing option below.`;
+  chResize(); chEqual(8);
+}
+function chResize() {
+  if (!ch || !$('#chop').classList.contains('on')) return;
+  const dpr = devicePixelRatio || 1; $cw.width = $cw.clientWidth * dpr; $cw.height = $cw.clientHeight * dpr;
+  const d = ch.buf.getChannelData(0), W = $cw.width, per = d.length / W;
+  ch.mins = new Float32Array(W); ch.maxs = new Float32Array(W);
+  for (let x = 0; x < W; x++) { let lo = 0, hi = 0; for (let k = Math.floor(x * per), e = Math.min(d.length, Math.floor((x + 1) * per) + 1); k < e; k++) { if (d[k] < lo) lo = d[k]; if (d[k] > hi) hi = d[k]; } ch.mins[x] = lo; ch.maxs[x] = hi; }
+  chRefresh();
+}
+function chRefresh() {   // redraw canvas + slice buttons + info
+  if (!ch) return;
+  const b = chBounds(), n = b.length - 1, st = chStart() - 1, fit = Math.max(0, NPADS - st);
+  $('#chRemove').disabled = ch.selM < 0;
+  const W = $cw.width, H = $cw.height, mid = H / 2, dpr = devicePixelRatio || 1;
+  cwc.clearRect(0, 0, W, H);
+  if (ch.mins) {
+    for (let i = 0; i < n; i++) {
+      const x0 = b[i] * W, x1 = b[i + 1] * W, ok = i < fit;
+      cwc.fillStyle = ok ? `hsl(${hue(st + i)} 70% 45% / .28)` : '#ffffff0d'; cwc.fillRect(x0, 0, x1 - x0, H);
+      cwc.fillStyle = ok ? '#fff' : '#777'; cwc.font = `bold ${12 * dpr}px system-ui`; cwc.fillText(i + 1, x0 + 5 * dpr, 15 * dpr);
+    }
+    cwc.fillStyle = '#e8e8ee';
+    for (let x = 0; x < W; x++) cwc.fillRect(x, mid + ch.mins[x] * mid * .9, 1, Math.max(1, (ch.maxs[x] - ch.mins[x]) * mid * .9));
+    ch.marks.forEach((m, k) => {
+      const x = m * W, on = k === ch.selM; cwc.fillStyle = on ? '#ffd23f' : '#fff';
+      cwc.fillRect(x - (on ? 2 : 1) * dpr, 0, (on ? 4 : 2) * dpr, H);
+      cwc.beginPath(); cwc.arc(x, H - 14 * dpr, (on ? 9 : 6) * dpr, 0, 7); cwc.fill();
+    });
+  }
+  const strip = $('#chSlices'); strip.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement('div'); el.className = 'pad' + (i < fit ? '' : ' empty'); el.style.setProperty('--h', hue(st + i)); el.textContent = i + 1;
+    el.addEventListener('pointerdown', e => { e.preventDefault(); ctx.resume(); chPlay(i); flash(el); });
+    strip.appendChild(el);
+  }
+  $('#chInfo').textContent = n > fit ? `${n} slices, but only ${fit} fit. The rest are skipped.` : `${n} slice${n > 1 ? 's' : ''} → pads ${st + 1}–${st + n}`;
+}
+function chPlay(i) {
+  const b = chBounds(), dur = ch.buf.duration, src = ctx.createBufferSource();
+  src.buffer = ch.buf; src.connect(master); src.start(0, b[i] * dur, Math.max(.01, (b[i + 1] - b[i]) * dur));
+}
+function chEqual(n) { ch.marks = Array.from({ length: n - 1 }, (_, i) => (i + 1) / n); ch.selM = -1; chRefresh(); }
+function detectHits(buf, maxMarks = MAXCUTS) {   // onset detection -> cut positions (fractions)
+  const d = buf.getChannelData(0), sr = buf.sampleRate, hop = Math.floor(sr * .005), win = hop * 2, n = Math.floor(d.length / hop);
+  const e = new Float32Array(n), f = new Float32Array(n); let mx = 0;
+  for (let k = 0; k < n; k++) { let sum = 0; for (let j = 0, a = k * hop; j < win && a + j < d.length; j++) sum += d[a + j] * d[a + j]; e[k] = Math.sqrt(sum / win); }
+  for (let k = 3; k < n; k++) { f[k] = Math.max(0, e[k] - (e[k - 1] + e[k - 2] + e[k - 3]) / 3); mx = Math.max(mx, f[k]); }
+  if (mx <= 0) return [];
+  const cand = []; for (let k = 3; k < n - 1; k++) if (f[k] > mx * .15 && f[k] >= f[k - 1] && f[k] >= f[k + 1]) cand.push({ k, v: f[k] });
+  cand.sort((a, b) => b.v - a.v);
+  const minD = Math.ceil(.1 / (hop / sr)), picked = [];
+  for (const c of cand) { if (picked.length >= maxMarks) break; if (c.k * hop < sr * .05) continue; if (picked.every(p => Math.abs(p.k - c.k) >= minD)) picked.push(c); }
+  return picked.map(p => Math.max(0, p.k * hop - Math.floor(sr * .005)) / d.length).sort((a, b) => a - b);
+}
+$('#chAuto').onclick = () => {
+  const m = detectHits(ch.buf);
+  if (!m.length) return toast('No clear hits found. Try equal slices.');
+  ch.marks = m; ch.selM = -1; chRefresh(); toast(`Found ${m.length + 1} slices`);
+};
+document.querySelectorAll('.chN').forEach(b => b.onclick = () => chEqual(+b.dataset.n));
+$('#chRemove').onclick = () => { if (ch.selM >= 0) { ch.marks.splice(ch.selM, 1); ch.selM = -1; chRefresh(); } };
+$('#chStart').innerHTML = Array.from({ length: NPADS }, (_, i) => `<option value="${i + 1}">Pad ${i + 1}</option>`).join('');
+$('#chStart').onchange = chRefresh;
+let chDrag = -1;
+$cw.addEventListener('pointerdown', e => {
+  if (!ch) return;
+  const r = $cw.getBoundingClientRect(), x = (e.clientX - r.left) / r.width; let best = -1, bd = 22 / r.width;
+  ch.marks.forEach((m, k) => { if (Math.abs(m - x) < bd) { bd = Math.abs(m - x); best = k; } });
+  if (best < 0) {
+    if (ch.marks.length >= MAXCUTS) return toast('16 slices is the maximum');
+    const gap = .02 / ch.buf.duration, bnd = chBounds(); if (bnd.some(m => Math.abs(m - x) < gap)) return;
+    ch.marks.push(x); ch.marks.sort((a, b) => a - b); best = ch.marks.indexOf(x);
+  }
+  ch.selM = best; chDrag = best; $cw.setPointerCapture(e.pointerId); chRefresh();
+});
+$cw.addEventListener('pointermove', e => {
+  if (chDrag < 0) return;
+  const r = $cw.getBoundingClientRect(), gap = .02 / ch.buf.duration, b = chBounds();
+  ch.marks[chDrag] = Math.max(b[chDrag] + gap, Math.min(b[chDrag + 2] - gap, (e.clientX - r.left) / r.width)); chRefresh();
+});
+['pointerup', 'pointercancel'].forEach(ev => $cw.addEventListener(ev, () => chDrag = -1));
+window.addEventListener('resize', chResize);
+
+$('#chRec').onclick = () => toggleRec({ btn: $('#chRec'), max: 30, idle: '● Record', onBuf: loadChop });
+$('#chUse').onclick = () => { const p = pads[sel]; if (!p.buffer) return toast('Select a pad that has a sound'); loadChop(p.buffer); };
+$('#chImport').onclick = () => $('#chFile').click();
+$('#chFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    await ctx.resume(); let buf = await ctx.decodeAudioData(await f.arrayBuffer());
+    if (buf.duration > 60) { toast('Long file: using the first 60 seconds'); const t = ctx.createBuffer(buf.numberOfChannels, Math.floor(60 * buf.sampleRate), buf.sampleRate); for (let c = 0; c < t.numberOfChannels; c++) t.copyToChannel(buf.getChannelData(c).subarray(0, t.length), c); buf = t; }
+    const m = process(buf); if (!m) return toast('That file is silent'); loadChop(m);
+  } catch { toast('Could not read that audio file'); }
+};
+$('#chApply').onclick = () => {
+  const b = chBounds(), st = chStart() - 1, n = Math.min(b.length - 1, NPADS - st), over = [];
+  for (let k = 0; k < n; k++) if (pads[st + k].buffer) over.push(`${st + k + 1} ${pads[st + k].name}`);
+  if (over.length && !confirm(`This replaces ${over.length} existing sound${over.length > 1 ? 's' : ''} (pad ${over.join(', pad ')}) and clears their beat steps. Continue?`)) return;
+  for (let k = 0; k < n; k++) { pattern[st + k].fill(0); setSample(st + k, sliceBuf(ch.buf, b[k], b[k + 1]), `Chop ${k + 1}`); }
+  sel = st; saveState(); document.querySelector('[data-t=pads]').click(); renderPads();
+  play(st); toast(`${n} slices on pads ${st + 1}–${st + n}`);
+};
+
 /* ---------- tabs & boot ---------- */
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('main section').forEach(s => s.classList.toggle('on', s.id === b.dataset.t));
-  if (playing && b.dataset.t !== 'beat') { /* keep the beat running while you play keys */ }
+  if (b.dataset.t === 'chop') chResize();
 });
 document.addEventListener('contextmenu', e => e.preventDefault());
 master.gain.value = 0.75 * mv;
@@ -539,7 +686,7 @@ idb('readonly', s => s.getAll()).then(rows => {
   if (rows && rows.length) { renderPads(); renderBeat(); }
 });
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
-window.__pp = { pads, pattern: () => pattern };
+window.__pp = { pads, pattern: () => pattern, detectHits, loadChop, ctx };
 </script>
 </body>
 </html>
