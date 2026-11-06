@@ -9,6 +9,10 @@ A deliberately simple, phone-first sampler (a "Koala-lite"). No install, no buil
 
 **Record hits live:** on the Beat tab press **● Rec hits** and tap the pads under the grid while the loop plays. Each tap snaps to the nearest step. **↶ Undo** removes the last take.
 
+**Rename and erase:** tap the pad name in the bottom bar (✎) to rename it. Erase removes a sound for good, built-in drums included.
+
+**Export:** on the Beat tab pick 1–8 loops and press **⬇ Export WAV**. On phones it opens the share sheet (Save to Files, AirDrop, messaging apps); on desktop it downloads.
+
 Installable as a PWA (home-screen icon, fullscreen, works offline once loaded). If you change a cached file, bump `VERSION` in `sw.js`.
 
 Comes with 8 built-in synthesised drum sounds, so it makes noise immediately.

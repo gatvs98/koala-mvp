@@ -58,6 +58,7 @@
   .ctl{display:flex;gap:8px;margin:2px 0 10px}
   .ctl button{flex:1;font-weight:700}
   #live.on{background:var(--rec);border-color:var(--rec);color:#fff;animation:pulse 1s infinite}
+  select{font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 8px}
   .strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
   .strip .pad{aspect-ratio:auto;height:68px}
 
@@ -66,7 +67,7 @@
   #rec{flex:1;font-weight:700;background:var(--rec);border-color:var(--rec);color:#fff;padding:14px}
   #rec.on{animation:pulse 1s infinite}
   @keyframes pulse{50%{filter:brightness(1.5)}}
-  #who{font-size:12px;color:var(--dim);min-width:84px;text-align:center}
+  #who{font-size:12px;color:var(--dim);min-width:84px;text-align:center;padding:8px 0}
   #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:10px 14px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9}
   #toast.on{opacity:1}
 </style>
@@ -106,7 +107,11 @@
     <div id="seq"></div>
     <p class="hint" id="liveHint">Tip: press <b>● Rec hits</b>, then tap the pads below in time. Hits snap to the nearest step.</p>
     <div class="strip" id="strip"></div>
-    <div class="row" style="margin-top:14px"><button id="clear">Clear beat</button></div>
+    <div class="row" style="margin-top:14px">
+      <button id="clear">Clear beat</button>
+      <span><select id="loops" aria-label="Loops to export"><option value="1">1 loop</option><option value="2" selected>2 loops</option><option value="4">4 loops</option><option value="8">8 loops</option></select>
+      <button id="export">⬇ Export WAV</button></span>
+    </div>
   </section>
 </main>
 
@@ -125,7 +130,7 @@ const hue = i => (i * 23 + 350) % 360;
 
 /* ---------- audio core ---------- */
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
-const master = ctx.createGain(); master.gain.value = 0.9;
+const master = ctx.createGain(); master.gain.value = 0.75;
 const comp = ctx.createDynamicsCompressor(); master.connect(comp); comp.connect(ctx.destination);
 const SR = ctx.sampleRate;
 
@@ -178,9 +183,14 @@ async function idb(mode, fn) {
 let pattern = Array.from({ length: NPADS }, () => Array(STEPS).fill(0));
 [[0, 8, 10], [4, 12]].forEach((on, r) => on.forEach(s => pattern[r][s] = 1));
 for (let s = 0; s < STEPS; s += 2) pattern[2][s] = 1;
-let bpm = 100;
-function saveState() { try { localStorage.setItem('pp', JSON.stringify({ bpm, pattern })); } catch {} }
-try { const s = JSON.parse(localStorage.getItem('pp') || 'null'); if (s) { bpm = s.bpm; pattern = s.pattern; } } catch {}
+let bpm = 100, names = {}, erased = [];   // names: custom pad names; erased: built-in pads the user removed
+function saveState() { try { localStorage.setItem('pp', JSON.stringify({ bpm, pattern, names, erased })); } catch {} }
+try {
+  const s = JSON.parse(localStorage.getItem('pp') || 'null');
+  if (s) { bpm = s.bpm; pattern = s.pattern; names = s.names || {}; erased = s.erased || []; }
+  erased.forEach(i => { pads[i].buffer = null; pads[i].name = ''; });
+  Object.entries(names).forEach(([i, n]) => { if (pads[i].buffer) pads[i].name = n; });
+} catch {}
 
 /* ---------- toast ---------- */
 let tt; function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('on'), 2200); }
@@ -208,7 +218,7 @@ function renderPads() {
 }
 function updateWho() {
   const p = pads[sel];
-  $('#who').textContent = `Pad ${sel + 1}${p.buffer ? ' · ' + p.name : ' · empty'}`;
+  $('#who').textContent = `Pad ${sel + 1}${p.buffer ? ' · ' + p.name + ' ✎' : ' · empty'}`;
   $('#keysHint').textContent = p.buffer ? `Playing: ${p.name}` : 'Pad is empty — record something!';
 }
 
@@ -325,6 +335,37 @@ $('#bpm').value = bpm; $('#bpmLbl').textContent = bpm + ' BPM';
 $('#bpm').oninput = e => { bpm = +e.target.value; $('#bpmLbl').textContent = bpm + ' BPM'; saveState(); };
 $('#clear').onclick = () => { pattern.forEach(r => r.fill(0)); saveState(); renderBeat(); };
 
+/* ---------- export the beat as a WAV ---------- */
+function encodeWav(buf) {
+  const d = buf.getChannelData(0), n = d.length, v = new DataView(new ArrayBuffer(44 + n * 2));
+  const w = (o, t) => [...t].forEach((c, k) => v.setUint8(o + k, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true); v.setUint32(24, buf.sampleRate, true); v.setUint32(28, buf.sampleRate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, d[i])) * 0x7fff, true);
+  return new Blob([v], { type: 'audio/wav' });
+}
+async function exportWav() {
+  if (!pattern.some((r, i) => pads[i].buffer && r.some(Boolean))) return toast('Add some steps to the beat first');
+  const loops = +$('#loops').value, stepDur = 60 / bpm / 4, tail = 1.5;
+  const off = new OfflineAudioContext(1, Math.ceil((loops * STEPS * stepDur + tail) * SR), SR);
+  const m = off.createGain(); m.gain.value = master.gain.value;
+  const c = off.createDynamicsCompressor(); m.connect(c); c.connect(off.destination);
+  for (let l = 0; l < loops; l++) for (let s = 0; s < STEPS; s++) for (let i = 0; i < NPADS; i++) {
+    if (!pattern[i][s] || !pads[i].buffer) continue;
+    const src = off.createBufferSource(); src.buffer = pads[i].buffer; src.connect(m); src.start((l * STEPS + s) * stepDur);
+  }
+  toast('Rendering…');
+  const blob = encodeWav(await off.startRendering()), name = `pocket-pads-${bpm}bpm.wav`;
+  const file = new File([blob], name, { type: 'audio/wav' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'My beat' }); return; } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast('Saved ' + name);
+}
+$('#export').onclick = () => { ctx.resume(); exportWav(); };
+
 /* ---------- recording ---------- */
 let recorder = null;
 function process(buf) {  // mono mix, trim silence, normalise
@@ -343,6 +384,9 @@ function process(buf) {  // mono mix, trim silence, normalise
 }
 function setSample(i, buffer, name, save = true) {
   pads[i].buffer = buffer; pads[i].name = name;
+  delete names[i]; erased = erased.filter(x => x !== i);
+  if (!buffer) erased.push(i);
+  saveState();
   if (save) idb('readwrite', s => buffer ? s.put({ i, name, rate: buffer.sampleRate, data: buffer.getChannelData(0) }, i) : s.delete(i));
   renderPads(); renderBeat(); renderKeys();
 }
@@ -369,6 +413,12 @@ async function toggleRec() {
   recorder = mr; mr.start(); btn.classList.add('on'); btn.textContent = '■ Stop  0.0s';
 }
 $('#rec').onclick = toggleRec;
+$('#who').onclick = () => {
+  const p = pads[sel]; if (!p.buffer) return toast('Record something first');
+  const n = (prompt('Name this sound', p.name) || '').trim().slice(0, 12);
+  if (!n) return;
+  p.name = n; names[sel] = n; saveState(); renderPads(); renderBeat();
+};
 $('#erase').onclick = () => { if (pads[sel].buffer) { pattern[sel].fill(0); saveState(); setSample(sel, null, ''); } };
 
 /* ---------- tabs & boot ---------- */
