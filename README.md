@@ -11,6 +11,8 @@ A deliberately simple, phone-first sampler (a "Koala-lite"). No install, no buil
 
 **Rename and erase:** tap the pad name in the bottom bar (✎) to rename it. Erase removes a sound for good, built-in drums included.
 
+**Mix:** on the Beat tab, **🎚 Mix** opens a master volume and one slider per sound (0–150%). It applies to pads, keys, the beat and the export, and is saved.
+
 **Export:** on the Beat tab pick 1–8 loops and press **⬇ Export WAV**. On phones it opens the share sheet (Save to Files, AirDrop, messaging apps); on desktop it downloads.
 
 Installable as a PWA (home-screen icon, fullscreen, works offline once loaded). If you change a cached file, bump `VERSION` in `sw.js`.
