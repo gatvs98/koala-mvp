@@ -7,6 +7,10 @@ A deliberately simple, phone-first sampler (a "Koala-lite"). No install, no buil
 - **Keys** – the selected pad's sound, pitched across a 2-octave piano keyboard (Oct −/+ to shift).
 - **Beat** – 16-step drum machine with tempo slider; every pad that has a sound gets a row. Your recordings are drum sounds too.
 
+**Record hits live:** on the Beat tab press **● Rec hits** and tap the pads under the grid while the loop plays. Each tap snaps to the nearest step. **↶ Undo** removes the last take.
+
+Installable as a PWA (home-screen icon, fullscreen, works offline once loaded). If you change a cached file, bump `VERSION` in `sw.js`.
+
 Comes with 8 built-in synthesised drum sounds, so it makes noise immediately.
 Recordings are stored on-device (IndexedDB); beat + tempo in localStorage.
 
@@ -15,4 +19,4 @@ Recordings are stored on-device (IndexedDB); beat + tempo in localStorage.
 (host it on GitHub Pages / Netlify for real phone use, then "Add to Home Screen").
 
 ## Roadmap ideas
-Sample trimming, pad-recording straight from the beat, per-step velocity, loop-record multi-track, export WAV, share link, PWA offline manifest.
+Sample trimming, chop mode, per-step velocity, loop-record multi-track, export WAV, share link, PWA offline manifest.

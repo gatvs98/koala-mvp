@@ -6,6 +6,11 @@
 <meta name="theme-color" content="#121212">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-title" content="Pocket Pads">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Pocket Pads</title>
 <style>
   :root{--bg:#121212;--panel:#1c1c1f;--line:#2e2e33;--text:#f2f2f2;--dim:#8d8d96;--rec:#ff3b4e;--accent:#ffd23f}
@@ -50,6 +55,12 @@
   .cell.on{background:hsl(var(--h) 80% 55%)}
   .cell.now{box-shadow:inset 0 0 0 2px #fff}
 
+  .ctl{display:flex;gap:8px;margin:2px 0 10px}
+  .ctl button{flex:1;font-weight:700}
+  #live.on{background:var(--rec);border-color:var(--rec);color:#fff;animation:pulse 1s infinite}
+  .strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
+  .strip .pad{aspect-ratio:auto;height:68px}
+
   /* footer record bar */
   footer{display:flex;gap:8px;align-items:center;padding:10px 12px 12px;border-top:1px solid var(--line)}
   #rec{flex:1;font-weight:700;background:var(--rec);border-color:var(--rec);color:#fff;padding:14px}
@@ -83,13 +94,19 @@
   </section>
 
   <section id="beat">
-    <div class="tempo">
+    <div class="ctl">
       <button id="play">▶ Play</button>
-      <span id="bpmLbl" style="width:62px">100 BPM</span>
+      <button id="live">● Rec hits</button>
+      <button id="undo">↶ Undo</button>
+    </div>
+    <div class="tempo">
+      <span id="bpmLbl" style="width:76px;white-space:nowrap">100 BPM</span>
       <input type="range" id="bpm" min="60" max="180" value="100">
     </div>
     <div id="seq"></div>
-    <div class="row" style="margin-top:10px"><button id="clear">Clear beat</button><span class="hint">Every pad with a sound gets a row.</span></div>
+    <p class="hint" id="liveHint">Tip: press <b>● Rec hits</b>, then tap the pads below in time. Hits snap to the nearest step.</p>
+    <div class="strip" id="strip"></div>
+    <div class="row" style="margin-top:14px"><button id="clear">Clear beat</button></div>
   </section>
 </main>
 
@@ -170,21 +187,23 @@ let tt; function toast(m) { const t = $('#toast'); t.textContent = m; t.classLis
 
 /* ---------- pads ---------- */
 function flash(el) { el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 90); }
+function padEl(i, big) {
+  const p = pads[i], el = document.createElement('div');
+  el.className = 'pad' + (p.buffer ? '' : ' empty') + (big && i === sel ? ' sel' : '');
+  el.style.setProperty('--h', hue(i));
+  el.innerHTML = `<b>${i + 1}</b>${p.buffer ? p.name : 'empty'}`;
+  el.addEventListener('pointerdown', e => {
+    e.preventDefault(); ctx.resume();
+    if (big) {
+      const g = $('#padGrid'); if (sel !== i) { g.querySelector('.sel')?.classList.remove('sel'); el.classList.add('sel'); sel = i; updateWho(); }
+      if (p.buffer) { play(i); flash(el); }
+    } else hitPad(i, el);
+  });
+  return el;
+}
 function renderPads() {
   const g = $('#padGrid'); g.innerHTML = '';
-  pads.forEach((p, i) => {
-    const el = document.createElement('div');
-    el.className = 'pad' + (p.buffer ? '' : ' empty') + (i === sel ? ' sel' : '');
-    el.style.setProperty('--h', hue(i));
-    el.innerHTML = `<b>${i + 1}</b>${p.buffer ? p.name : 'empty'}`;
-    el.addEventListener('pointerdown', e => {
-      e.preventDefault(); ctx.resume();
-      const changed = sel !== i; sel = i;
-      if (changed) { g.querySelector('.sel')?.classList.remove('sel'); el.classList.add('sel'); updateWho(); }
-      if (p.buffer) { play(i); flash(el); }
-    });
-    g.appendChild(el);
-  });
+  pads.forEach((_, i) => g.appendChild(padEl(i, true)));
   updateWho();
 }
 function updateWho() {
@@ -237,9 +256,9 @@ function renderBeat() {
   const root = $('#seq'); root.innerHTML = '';
   pads.forEach((p, i) => {
     if (!p.buffer) return;
-    const row = document.createElement('div'); row.className = 'seq'; row.style.setProperty('--h', hue(i));
+    const row = document.createElement('div'); row.className = 'seq'; row.dataset.p = i; row.style.setProperty('--h', hue(i));
     const lab = document.createElement('button'); lab.className = 'lab'; lab.textContent = p.name;
-    lab.onpointerdown = e => { e.preventDefault(); ctx.resume(); play(i); };
+    lab.onpointerdown = e => { e.preventDefault(); ctx.resume(); hitPad(i, lab); };
     const cells = document.createElement('div'); cells.className = 'cells';
     for (let s = 0; s < STEPS; s++) {
       const c = document.createElement('button');
@@ -249,11 +268,36 @@ function renderBeat() {
     }
     row.append(lab, cells); root.appendChild(row);
   });
+  const strip = $('#strip'); strip.innerHTML = '';
+  pads.forEach((p, i) => p.buffer && strip.appendChild(padEl(i, false)));
 }
+/* --- live "record hits" into the grid --- */
+const recent = [];            // last scheduled steps {s,t}, used to snap taps to the nearest step
+let liveOn = false, take = [];
+function hitPad(i, el) {
+  if (!pads[i].buffer) return;
+  play(i); flash(el);
+  if (!liveOn || !playing) return;
+  const now = ctx.currentTime; let best = null;
+  for (const e of recent) if (!best || Math.abs(e.t - now) < Math.abs(best.t - now)) best = e;
+  if (!best || pattern[i][best.s]) return;
+  pattern[i][best.s] = 1; take.push([i, best.s]); saveState();
+  document.querySelector(`.seq[data-p="${i}"] .cell[data-s="${best.s}"]`)?.classList.add('on');
+}
+function setLive(on) {
+  liveOn = on; if (on) take = [];
+  $('#live').classList.toggle('on', on); $('#live').textContent = on ? '● Recording' : '● Rec hits';
+  if (on && !playing) togglePlay();
+}
+$('#live').onclick = () => setLive(!liveOn);
+$('#undo').onclick = () => {
+  if (!take.length) return toast('Nothing to undo');
+  take.forEach(([i, s]) => pattern[i][s] = 0); const n = take.length; take = []; saveState(); renderBeat(); toast(`Removed ${n} hit${n > 1 ? 's' : ''}`);
+};
 function tick() {
   while (nextTime < ctx.currentTime + 0.12) {
     for (let i = 0; i < NPADS; i++) if (pattern[i][step] && pads[i].buffer) play(i, { when: nextTime });
-    queue.push({ s: step, t: nextTime });
+    queue.push({ s: step, t: nextTime }); recent.push({ s: step, t: nextTime }); if (recent.length > 16) recent.shift();
     nextTime += 60 / bpm / 4; step = (step + 1) % STEPS;
   }
 }
@@ -273,8 +317,8 @@ function togglePlay() {
   ctx.resume();
   playing = !playing;
   $('#play').classList.toggle('on', playing); $('#play').textContent = playing ? '■ Stop' : '▶ Play';
-  if (playing) { step = 0; nextTime = ctx.currentTime + 0.05; queue.length = 0; tick(); timer = setInterval(tick, 25); requestAnimationFrame(showHead); }
-  else { clearInterval(timer); setHead(-1); lastShown = -1; }
+  if (playing) { step = 0; nextTime = ctx.currentTime + 0.05; queue.length = 0; recent.length = 0; tick(); timer = setInterval(tick, 25); requestAnimationFrame(showHead); }
+  else { clearInterval(timer); setHead(-1); lastShown = -1; recent.length = 0; if (liveOn) setLive(false); }
 }
 $('#play').onclick = togglePlay;
 $('#bpm').value = bpm; $('#bpmLbl').textContent = bpm + ' BPM';
@@ -342,6 +386,7 @@ idb('readonly', s => s.getAll()).then(rows => {
   });
   if (rows && rows.length) { renderPads(); renderBeat(); }
 });
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 window.__pp = { pads, pattern: () => pattern };
 </script>
 </body>
