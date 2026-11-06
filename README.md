@@ -11,6 +11,8 @@ A deliberately simple, phone-first sampler (a "Koala-lite"). No install, no buil
 
 **Rename and erase:** tap the pad name in the bottom bar (✎) to rename it. Erase removes a sound for good, built-in drums included.
 
+**Count-in:** when you press **● Record**, you hear clicks at the Beat tab's tempo and see a big countdown; recording starts right after the last click (clicks never end up in the recording). The footer **⏱** button cycles 4 beats / 2 beats / Off, and is saved. Press Record again during the count to cancel. Works for the Chop tab's Record too.
+
 **Chop:** the **Chop** tab cuts one long sound into up to 16 slices and spreads them over the pads. Load a sound (**Record**, **Import** an audio file, or **Use pad sound**), then pick **4/8/16 equal** slices or **✨ Auto-detect hits**. Tap the waveform to add a cut, drag a cut to move it, tap a cut then **✕ Remove cut** to delete it. Tap the numbered buttons to audition each slice, choose the first pad to fill from, then **Put slices on pads** (it warns before overwriting, and clears those pads' beat steps).
 
 **Trim:** select a pad and press **✂ Trim** (bottom bar). Drag the start and end handles over the waveform, **Preview**, then **Save**. Saving replaces the sound (Reset/Cancel before saving to undo).
