@@ -71,10 +71,18 @@
 
   /* footer record bar */
   footer{display:flex;gap:8px;align-items:center;padding:10px 12px 12px;border-top:1px solid var(--line)}
-  #rec{flex:1;font-weight:700;background:var(--rec);border-color:var(--rec);color:#fff;padding:14px}
+  #rec{flex:1;font-weight:700;background:var(--rec);border-color:var(--rec);color:#fff;padding:14px 8px}
+  footer button{padding-left:10px;padding-right:10px}
   #rec.on{animation:pulse 1s infinite}
   @keyframes pulse{50%{filter:brightness(1.5)}}
-  #who{font-size:12px;color:var(--dim);min-width:84px;text-align:center;padding:8px 0}
+  #who{font-size:12px;color:var(--dim);min-width:70px;text-align:center;padding:8px 0}
+  #trim{position:fixed;inset:0;z-index:20;background:#000d;display:none;align-items:center;justify-content:center;padding:16px}
+  #trim.on{display:flex}
+  .tbox{width:100%;max-width:560px;background:var(--bg);border:1px solid var(--line);border-radius:18px;padding:16px}
+  .tbox h3{margin:0 0 4px;font-size:16px}
+  #wave{width:100%;height:170px;display:block;background:var(--panel);border-radius:12px;touch-action:none}
+  .tbtns{display:flex;gap:8px;margin-top:12px}.tbtns button{flex:1;font-weight:700}
+  #trSave{background:var(--accent);border-color:var(--accent);color:#000}
   #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:10px 14px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9}
   #toast.on{opacity:1}
 </style>
@@ -126,8 +134,16 @@
 <footer>
   <button id="rec">● Record</button>
   <div id="who"></div>
+  <button id="trimBtn">✂ Trim</button>
   <button id="erase">Erase</button>
 </footer>
+<div id="trim"><div class="tbox">
+  <h3>Trim: <span id="trName"></span></h3>
+  <p class="hint" style="margin:0 0 8px">Drag the yellow handles, then press Save. <span id="trLen"></span></p>
+  <canvas id="wave"></canvas>
+  <div class="tbtns"><button id="trPlay">▶ Preview</button><button id="trReset">Reset</button></div>
+  <div class="tbtns"><button id="trCancel">Cancel</button><button id="trSave">Save</button></div>
+</div></div>
 <div id="toast"></div>
 
 <script>
@@ -443,6 +459,63 @@ $('#who').onclick = () => {
   p.name = n; names[sel] = n; saveState(); renderPads(); renderBeat();
 };
 $('#erase').onclick = () => { if (pads[sel].buffer) { pattern[sel].fill(0); saveState(); setSample(sel, null, ''); } };
+
+/* ---------- trim editor ---------- */
+let tr = null;   // {i, buf, a, b (0..1), mins, maxs, src}
+const $w = $('#wave'), wc = $w.getContext('2d'), MINLEN = 0.02;
+function stopPreview() { try { tr?.src?.stop(); } catch {} if (tr) tr.src = null; }
+function openTrim() {
+  const p = pads[sel]; if (!p.buffer) return toast('Record something first');
+  tr = { i: sel, buf: p.buffer, a: 0, b: 1, src: null };
+  $('#trim').classList.add('on'); $('#trName').textContent = p.name;
+  const dpr = devicePixelRatio || 1; $w.width = $w.clientWidth * dpr; $w.height = $w.clientHeight * dpr;
+  const d = p.buffer.getChannelData(0), W = $w.width; tr.mins = new Float32Array(W); tr.maxs = new Float32Array(W);
+  const per = d.length / W;
+  for (let x = 0; x < W; x++) { let lo = 0, hi = 0; for (let k = Math.floor(x * per), e = Math.min(d.length, Math.floor((x + 1) * per) + 1); k < e; k++) { if (d[k] < lo) lo = d[k]; if (d[k] > hi) hi = d[k]; } tr.mins[x] = lo; tr.maxs[x] = hi; }
+  drawWave();
+}
+function drawWave() {
+  const W = $w.width, H = $w.height, mid = H / 2, a = tr.a * W, b = tr.b * W, dpr = devicePixelRatio || 1;
+  wc.clearRect(0, 0, W, H);
+  for (let x = 0; x < W; x++) {
+    wc.fillStyle = x >= a && x <= b ? '#ffd23f' : '#55555c';
+    wc.fillRect(x, mid + tr.mins[x] * mid * .95, 1, Math.max(1, (tr.maxs[x] - tr.mins[x]) * mid * .95));
+  }
+  wc.fillStyle = '#0008'; wc.fillRect(0, 0, a, H); wc.fillRect(b, 0, W - b, H);
+  wc.fillStyle = '#fff';
+  [a, b].forEach((x, k) => { const w = 4 * dpr; wc.fillRect(x - w / 2, 0, w, H); wc.fillRect(x - (k ? 0 : 14 * dpr), mid - 18 * dpr, 14 * dpr, 36 * dpr); });
+  $('#trLen').textContent = ((tr.b - tr.a) * tr.buf.duration).toFixed(2) + 's of ' + tr.buf.duration.toFixed(2) + 's';
+}
+let drag = null;
+$w.addEventListener('pointerdown', e => {
+  const r = $w.getBoundingClientRect(), x = (e.clientX - r.left) / r.width;
+  drag = Math.abs(x - tr.a) <= Math.abs(x - tr.b) ? 'a' : 'b'; $w.setPointerCapture(e.pointerId); moveHandle(x);
+});
+$w.addEventListener('pointermove', e => { if (drag) { const r = $w.getBoundingClientRect(); moveHandle((e.clientX - r.left) / r.width); } });
+['pointerup', 'pointercancel'].forEach(ev => $w.addEventListener(ev, () => drag = null));
+function moveHandle(x) {
+  const gap = MINLEN / tr.buf.duration; x = Math.max(0, Math.min(1, x));
+  if (drag === 'a') tr.a = Math.min(x, tr.b - gap); else tr.b = Math.max(x, tr.a + gap);
+  tr.a = Math.max(0, tr.a); tr.b = Math.min(1, tr.b); drawWave();
+}
+$('#trPlay').onclick = () => {
+  ctx.resume(); stopPreview();
+  const src = ctx.createBufferSource(), g = ctx.createGain(); src.buffer = tr.buf; g.gain.value = vols[tr.i] ?? 1;
+  src.connect(g); g.connect(master); src.start(0, tr.a * tr.buf.duration, (tr.b - tr.a) * tr.buf.duration); tr.src = src;
+};
+$('#trReset').onclick = () => { tr.a = 0; tr.b = 1; drawWave(); };
+function closeTrim() { stopPreview(); tr = null; $('#trim').classList.remove('on'); }
+$('#trCancel').onclick = closeTrim;
+$('#trSave').onclick = () => {
+  const { i, buf, a, b } = tr, d = buf.getChannelData(0), s0 = Math.floor(a * d.length), s1 = Math.max(s0 + 1, Math.floor(b * d.length));
+  if (s0 === 0 && s1 >= d.length - 1) return closeTrim();
+  const out = ctx.createBuffer(1, s1 - s0, buf.sampleRate), o = out.getChannelData(0); o.set(d.subarray(s0, s1));
+  const fi = Math.min(o.length >> 1, Math.floor(buf.sampleRate * .003)), fo = Math.min(o.length >> 1, Math.floor(buf.sampleRate * .01));
+  for (let k = 0; k < fi; k++) o[k] *= k / fi;
+  for (let k = 0; k < fo; k++) o[o.length - 1 - k] *= k / fo;
+  const name = pads[i].name; closeTrim(); setSample(i, out, name); play(i); toast('Trimmed');
+};
+$('#trimBtn').onclick = openTrim;
 
 /* ---------- tabs & boot ---------- */
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {

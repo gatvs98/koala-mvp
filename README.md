@@ -11,6 +11,8 @@ A deliberately simple, phone-first sampler (a "Koala-lite"). No install, no buil
 
 **Rename and erase:** tap the pad name in the bottom bar (✎) to rename it. Erase removes a sound for good, built-in drums included.
 
+**Trim:** select a pad and press **✂ Trim** (bottom bar). Drag the start and end handles over the waveform, **Preview**, then **Save**. Saving replaces the sound (Reset/Cancel before saving to undo).
+
 **Mix:** on the Beat tab, **🎚 Mix** opens a master volume and one slider per sound (0–150%). It applies to pads, keys, the beat and the export, and is saved.
 
 **Export:** on the Beat tab pick 1–8 loops and press **⬇ Export WAV**. On phones it opens the share sheet (Save to Files, AirDrop, messaging apps); on desktop it downloads.
